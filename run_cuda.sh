@@ -14,7 +14,7 @@ module load gcc
 module load git
 module load cuda-toolkit/13.0.2
 
-SRC_DIR=/home/toutang/9S/in_situ
+SRC_DIR=${SLURM_SUBMIT_DIR:-$(pwd)}
 BUILD_DIR=${SRC_DIR}/build
 
 # Kokkos est un sous-module git
