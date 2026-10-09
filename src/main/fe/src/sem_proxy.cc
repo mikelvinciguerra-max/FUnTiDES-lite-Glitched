@@ -1,7 +1,7 @@
 //************************************************************************
 //   proxy application v.0.0.1
 //
-//  semproxy.cpp: the main interface of  proxy application
+//  .cpp: the main interface of  proxy application
 //
 //************************************************************************
 
@@ -20,7 +20,7 @@
 
 using namespace SourceAndReceiverUtils;
 
-SEMproxy::SEMproxy(const SemProxyOptions& opt)
+::(const Options& opt)
 {
   const int order = opt.order;
   nb_elements_[0] = opt.ex;
@@ -90,7 +90,7 @@ SEMproxy::SEMproxy(const SemProxyOptions& opt)
       }
       default:
         throw std::runtime_error(
-            "Order other than 1 2 3 is not supported (semproxy)");
+            "Order other than 1 2 3 is not supported ()");
     }
   }
   else if (meshType == SolverFactory::Unstruct)
@@ -102,7 +102,7 @@ SEMproxy::SEMproxy(const SemProxyOptions& opt)
   }
   else
   {
-    throw std::runtime_error("Incorrect mesh type (SEMproxy ctor.)");
+    throw std::runtime_error("Incorrect mesh type ( ctor.)");
   }
 
   // time parameters
@@ -140,7 +140,7 @@ SEMproxy::SEMproxy(const SemProxyOptions& opt)
 
 }
 
-void SEMproxy::run()
+void ::run()
 {
   time_point<system_clock> startComputeTime, startOutputTime, totalComputeTime,
       totalOutputTime;
@@ -208,7 +208,7 @@ void SEMproxy::run()
 }
 
 // Initialize arrays
-void SEMproxy::init_arrays()
+void ::init_arrays()
 {
   cout << "Allocate host memory for source and pressure values ..." << endl;
 
@@ -226,7 +226,7 @@ void SEMproxy::init_arrays()
 }
 
 // Initialize sources
-void SEMproxy::init_source()
+void ::init_source()
 {
   arrayReal myRHSLocation = allocateArray2D<arrayReal>(1, 3, "RHSLocation");
   // std::cout << "All source are currently are coded on element 50." <<
@@ -353,7 +353,7 @@ void SEMproxy::init_source()
   }
 }
 
-SolverFactory::implemType SEMproxy::getImplem(string implemArg)
+SolverFactory::implemType ::getImplem(string implemArg)
 {
   if (implemArg == "makutu") return SolverFactory::MAKUTU;
   if (implemArg == "shiva") return SolverFactory::SHIVA;
@@ -362,7 +362,7 @@ SolverFactory::implemType SEMproxy::getImplem(string implemArg)
       "Implentation type does not follow any valid type.");
 }
 
-SolverFactory::meshType SEMproxy::getMesh(string meshArg)
+SolverFactory::meshType ::getMesh(string meshArg)
 {
   if (meshArg == "cartesian") return SolverFactory::Struct;
   if (meshArg == "ucartesian") return SolverFactory::Unstruct;
@@ -371,7 +371,7 @@ SolverFactory::meshType SEMproxy::getMesh(string meshArg)
   throw std::invalid_argument("Mesh type does not follow any valid type.");
 }
 
-SolverFactory::methodType SEMproxy::getMethod(string methodArg)
+SolverFactory::methodType ::getMethod(string methodArg)
 {
   if (methodArg == "sem") return SolverFactory::SEM;
   if (methodArg == "dg") return SolverFactory::DG;
@@ -379,7 +379,7 @@ SolverFactory::methodType SEMproxy::getMethod(string methodArg)
   throw std::invalid_argument("Method type does not follow any valid type.");
 }
 
-float SEMproxy::find_cfl_dt(float cfl_factor)
+float ::find_cfl_dt(float cfl_factor)
 {
   float sqrtDim3 = 1.73;  // to change for 2d
   float min_spacing = m_mesh->getMinSpacing();
@@ -388,4 +388,13 @@ float SEMproxy::find_cfl_dt(float cfl_factor)
   float dt = cfl_factor * min_spacing / (sqrtDim3 * v_max);
 
   return dt;
+}
+
+SEMProxy::saveSnapshot(int timestep)
+{
+  std::ostringstream filename;
+  filename << snap_folder_ << "/snapshot_" << std::setfill('0') << std::setw(5)
+           << timestep << ".csv";
+  m_solver->outputSolutionValues(timestep, i1, rhsElement[0], pnGlobal,
+                                 filename.str());
 }

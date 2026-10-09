@@ -37,6 +37,13 @@ int main(int argc, char *argv[])
 {
   startInitTime = system_clock::now();
 
+  if (argc == 2) {
+    int timestep = std::stoi(argv[1]);
+    std::cout << "Saving snapshot at timestep: " << timestep << std::endl;
+    SEMproxy semsim(SemProxyOptions());
+    semsim.saveSnapshot(timestep);
+  }
+
 #ifdef USE_KOKKOS
   setenv("OMP_PROC_BIND", "spread", 1);
   setenv("OMP_PLACES", "threads", 1);
