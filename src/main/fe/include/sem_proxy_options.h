@@ -27,6 +27,8 @@ class SemProxyOptions
   bool isModelOnNodes = false;
   bool isElastic = false;
 
+  float timestep = 0.1f;  // timestep for snapshot saving
+
   void validate() const
   {
     if (order < 1) throw std::runtime_error("order must be >= 1");
@@ -71,6 +73,9 @@ class SemProxyOptions
         "Boolean to tell if the model is charged on nodes (true) or on element "
         "(false)",
         cxxopts::value<bool>(o.isModelOnNodes))(
-        "is-elastic", "Elastic simulation", cxxopts::value<bool>(o.isElastic));
+        "is-elastic", "Elastic simulation", cxxopts::value<bool>(o.isElastic))(
+        "timestep", "timestep for snapshot saving (default = 0.1s)",
+        cxxopts::value<float>(o.timestep));
+
   }
 };

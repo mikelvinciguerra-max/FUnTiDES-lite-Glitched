@@ -106,6 +106,8 @@ class SEMproxy
   const int sourceOrder = 2;
   int myElementSource = 0;
 
+  float timestep_; // timestep for snapshot saving
+
   std::shared_ptr<model::ModelApi<float, int>> m_mesh;
   std::unique_ptr<SEMSolverBase> m_solver;
   SolverUtils myUtils;
