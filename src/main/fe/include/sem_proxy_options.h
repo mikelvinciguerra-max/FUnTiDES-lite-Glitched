@@ -27,6 +27,11 @@ class SemProxyOptions
   bool isModelOnNodes = false;
   bool isElastic = false;
 
+  // seismograms (pressure at a list of receivers, saved at the end)
+  bool sismos = false;                    // enable seismogram saving
+  std::string receivers_file = "";         // text file: one "x y z" per line
+  std::string seismo_folder = "sismos";   // output folder
+
   // snapshots (full pnGlobal wavefield saved at regular intervals)
   bool snapshots = false;                       
   int snap_interval = 10;                       
@@ -85,6 +90,14 @@ class SemProxyOptions
         "Number of iterations between two snapshots (default = 10)",
         cxxopts::value<int>(o.snap_interval))(
         "snap-folder", "Output folder of the snapshots (default = snapshots)",
-        cxxopts::value<std::string>(o.snap_folder));
+        cxxopts::value<std::string>(o.snap_folder))(
+        "sismos", "Save the seismograms at the end of the simulation",
+        cxxopts::value<bool>(o.sismos))(
+        "receivers-file",
+        "Text file with one receiver per line: x y z (implies --sismos). "
+        "Without it, the single receiver --rcvx/--rcvy/--rcvz is used",
+        cxxopts::value<std::string>(o.receivers_file))(
+        "seismo-folder", "Output folder of the seismograms (default = sismos)",
+        cxxopts::value<std::string>(o.seismo_folder));
   }
 };
