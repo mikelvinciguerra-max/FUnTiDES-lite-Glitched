@@ -27,10 +27,15 @@ class SemProxyOptions
   bool isModelOnNodes = false;
   bool isElastic = false;
 
-  float timestep = 0.1f;  // timestep for snapshot saving
+  // snapshots (full pnGlobal wavefield saved at regular intervals)
+  bool snapshots = false;                       
+  int snap_interval = 10;                       
+  std::string snap_folder = "snapshots";        
 
   void validate() const
   {
+    if (snapshots && snap_interval <= 0)
+      throw std::runtime_error("snap-interval must be > 0");
     if (order < 1) throw std::runtime_error("order must be >= 1");
     if (ex <= 0 || ey <= 0 || ez <= 0)
       throw std::runtime_error("ex/ey/ez must be > 0");
@@ -74,8 +79,12 @@ class SemProxyOptions
         "(false)",
         cxxopts::value<bool>(o.isModelOnNodes))(
         "is-elastic", "Elastic simulation", cxxopts::value<bool>(o.isElastic))(
-        "timestep", "timestep for snapshot saving (default = 0.1s)",
-        cxxopts::value<float>(o.timestep));
-
+        "snapshots", "Save pnGlobal snapshots during the simulation",
+        cxxopts::value<bool>(o.snapshots))(
+        "snap-interval",
+        "Number of iterations between two snapshots (default = 10)",
+        cxxopts::value<int>(o.snap_interval))(
+        "snap-folder", "Output folder of the snapshots (default = snapshots)",
+        cxxopts::value<std::string>(o.snap_folder));
   }
 };

@@ -17,6 +17,7 @@
 #include <memory>
 #include <string>
 #include <variant>
+#include <vector>
 
 #include "sem_proxy_options.h"
 
@@ -74,9 +75,18 @@ class SEMproxy
    */
   float find_cfl_dt(float cfl_factor);
 
-  void saveSnapshot(int timestep);
+  /**
+   * @brief Save the current pressure field (newest column of pnGlobal) as
+   * raw float32 values, one value per node, in
+   * <snap_folder>/snapshot_<iteration>.bin (no compression).
+   * Node n of a snapshot matches row n of <snap_folder>/nodes.bin.
+   * @param indexTimeSample iteration index, used in the file name
+   */
+  void saveSnapshot(int indexTimeSample);
 
  private:
+  // write nodes.bin (node coordinates) and snapshots_meta.json
+  void initSnapshots(const SemProxyOptions& opt);
   int i1 = 0;
   int i2 = 1;
 
@@ -89,9 +99,13 @@ class SEMproxy
   float domain_size_[3] = {0};
 
   // snapshots
-  bool is_snapshots_;
-  int snap_time_interval_;
-  std::string snap_folder_;
+  bool is_snapshots_ = false;
+  int snap_time_interval_ = 10;
+  std::string snap_folder_ = "snapshots";
+  std::vector<float> snap_buffer_;     
+  int snap_count_ = 0;                
+  double snap_write_seconds_ = 0.0;   
+  unsigned long long snap_bytes_ = 0; 
 
   // physics
   bool isElastic_;
@@ -105,8 +119,6 @@ class SEMproxy
   const float f0 = 5.;
   const int sourceOrder = 2;
   int myElementSource = 0;
-
-  float timestep_; // timestep for snapshot saving
 
   std::shared_ptr<model::ModelApi<float, int>> m_mesh;
   std::unique_ptr<SEMSolverBase> m_solver;

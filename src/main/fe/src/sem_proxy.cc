@@ -12,7 +12,10 @@
 #include <sem_solver_acoustic.h>
 #include <source_and_receiver_utils.h>
 
+#include <chrono>
 #include <cxxopts.hpp>
+#include <filesystem>
+#include <fstream>
 #include <iomanip>
 #include <iostream>
 #include <sstream>
@@ -50,8 +53,6 @@ SEMproxy::SEMproxy(const SemProxyOptions& opt)
   isElastic_ = opt.isElastic;
   cout << boolalpha;
   bool isElastic = isElastic_;
-
-  float timestep = opt.timestep;  // timestep for snapshot saving
 
   const SolverFactory::methodType methodType = getMethod(opt.method);
   const SolverFactory::implemType implemType = getImplem(opt.implem);
@@ -127,6 +128,8 @@ SEMproxy::SEMproxy(const SemProxyOptions& opt)
 
   initFiniteElem();
 
+  initSnapshots(opt);
+
   std::cout << "Number of node is " << m_mesh->getNumberOfNodes() << std::endl;
   std::cout << "Number of element is " << m_mesh->getNumberOfElements()
             << std::endl;
@@ -150,8 +153,6 @@ void SEMproxy::run()
   SEMsolverDataAcoustic solverData(i1, i2, myRHSTerm, pnGlobal, rhsElement,
                                    rhsWeights);
 
-  float epsilon = dt_ * 0.1f;
-
   for (int indexTimeSample = 0; indexTimeSample < num_sample_;
        indexTimeSample++)
   {
@@ -167,7 +168,7 @@ void SEMproxy::run()
                                      pnGlobal, "pnGlobal");
     }
 
-    if (indexTimeSample % static_cast<int>(timestep_) == 0)
+    if (is_snapshots_ && indexTimeSample % snap_time_interval_ == 0)
     {
       saveSnapshot(indexTimeSample);
     }
@@ -213,6 +214,12 @@ void SEMproxy::run()
        << endl;
   cout << "---- Elapsed Output Time : " << outputtime_ms / 1E6 << " seconds."
        << endl;
+  if (is_snapshots_)
+  {
+    cout << "---- Snapshots           : " << snap_count_ << " files, "
+         << snap_bytes_ << " bytes, " << snap_write_seconds_ << " seconds."
+         << endl;
+  }
   cout << "------------------------------------------------ " << endl;
 }
 
@@ -399,11 +406,87 @@ float SEMproxy::find_cfl_dt(float cfl_factor)
   return dt;
 }
 
-void SEMproxy::saveSnapshot(int timestep)
+// Prepare the snapshot output: folder, node coordinates, metadata.
+// Nothing is done (and nothing is written) if snapshots are disabled.
+void SEMproxy::initSnapshots(const SemProxyOptions& opt)
 {
+  is_snapshots_ = opt.snapshots;
+  snap_time_interval_ = opt.snap_interval;
+  snap_folder_ = opt.snap_folder;
+  if (!is_snapshots_) return;
+
+  namespace fs = std::filesystem;
+  fs::create_directories(snap_folder_);
+
+  const int nbNodes = m_mesh->getNumberOfNodes();
+  snap_buffer_.resize(nbNodes);
+
+  // Node coordinates: nbNodes x 3 float32, row n = (x, y, z) of node n.
+  // Written once, it gives the node <-> coordinates mapping of every snapshot.
+  {
+    std::vector<float> coords(static_cast<size_t>(nbNodes) * 3);
+    for (int n = 0; n < nbNodes; n++)
+      for (int d = 0; d < 3; d++)
+        coords[static_cast<size_t>(n) * 3 + d] = m_mesh->nodeCoord(n, d);
+
+    std::ofstream f(snap_folder_ + "/nodes.bin", std::ios::binary);
+    if (!f) throw std::runtime_error("Cannot write " + snap_folder_ + "/nodes.bin");
+    f.write(reinterpret_cast<const char*>(coords.data()),
+            coords.size() * sizeof(float));
+  }
+
+  // Metadata (JSON) so that a visualisation script knows how to read the files.
+  {
+    std::ofstream f(snap_folder_ + "/snapshots_meta.json");
+    if (!f) throw std::runtime_error("Cannot write snapshots_meta.json");
+    f << "{\n"
+      << "  \"dtype\": \"float32\",\n"
+      << "  \"nodes_file\": \"nodes.bin\",\n"
+      << "  \"nodes_shape\": [" << nbNodes << ", 3],\n"
+      << "  \"snapshot_pattern\": \"snapshot_<iteration:05d>.bin\",\n"
+      << "  \"snapshot_shape\": [" << nbNodes << "],\n"
+      << "  \"snap_interval\": " << snap_time_interval_ << ",\n"
+      << "  \"dt\": " << dt_ << ",\n"
+      << "  \"num_iterations\": " << num_sample_ << ",\n"
+      << "  \"order\": " << m_mesh->getOrder() << ",\n"
+      << "  \"ex\": " << nb_elements_[0] << ", \"ey\": " << nb_elements_[1]
+      << ", \"ez\": " << nb_elements_[2] << ",\n"
+      << "  \"lx\": " << domain_size_[0] << ", \"ly\": " << domain_size_[1]
+      << ", \"lz\": " << domain_size_[2] << "\n"
+      << "}\n";
+  }
+
+  std::cout << "Snapshots enabled: every " << snap_time_interval_
+            << " iterations in folder '" << snap_folder_ << "'" << std::endl;
+}
+
+// Save the newest pressure field. After computeOneStep the new time step is
+// stored in column i1 of pnGlobal (updatePressureField writes into i1), so
+// this must be called before swap(i1, i2) in run().
+void SEMproxy::saveSnapshot(int indexTimeSample)
+{
+  const auto start = std::chrono::steady_clock::now();
+
+#ifdef USE_KOKKOS
+  Kokkos::fence();  // make sure the device is done before reading on the host
+#endif
+
+  const int nbNodes = m_mesh->getNumberOfNodes();
+  for (int n = 0; n < nbNodes; n++) snap_buffer_[n] = pnGlobal(n, i1);
+
   std::ostringstream filename;
   filename << snap_folder_ << "/snapshot_" << std::setfill('0') << std::setw(5)
-           << timestep << ".csv";
-  m_solver->outputSolutionValues(timestep, i1, rhsElement[0], pnGlobal,
-                                 filename.str().c_str());
+           << indexTimeSample << ".bin";
+
+  std::ofstream f(filename.str(), std::ios::binary);
+  if (!f) throw std::runtime_error("Cannot write " + filename.str());
+  f.write(reinterpret_cast<const char*>(snap_buffer_.data()),
+          snap_buffer_.size() * sizeof(float));
+  f.close();
+
+  snap_count_++;
+  snap_bytes_ += snap_buffer_.size() * sizeof(float);
+  snap_write_seconds_ +=
+      std::chrono::duration<double>(std::chrono::steady_clock::now() - start)
+          .count();
 }
