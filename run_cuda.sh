@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH -C V100
+#SBATCH -C sirocco
 #SBATCH --job-name=semproxy_cuda
 #SBATCH --output=logs/semproxy_cuda.log
 #SBATCH --time=00:30:00
@@ -48,4 +48,4 @@ export LD_LIBRARY_PATH=${WORK_DIR}/cudalib:${LD_LIBRARY_PATH:-}
 mkdir -p ${SRC_DIR}/snapshots
 mkdir -p ${SRC_DIR}/sismos
 ./bin/semproxy --ex 100 --snapshots --snap-interval 50 --snap-folder ${SRC_DIR}/snapshots \
-    --receivers-file ${SRC_DIR}/rcv.txt --seismo-folder ${SRC_DIR}/sismos
+    --receivers-file ${SRC_DIR}/rcv.txt --sismo-folder ${SRC_DIR}/sismos
