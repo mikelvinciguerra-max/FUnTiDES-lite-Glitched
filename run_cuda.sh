@@ -45,4 +45,7 @@ mkdir -p ${WORK_DIR}/cudalib
 ln -sf ${LIBCUDA_DIR}/libcuda.so.1 ${WORK_DIR}/cudalib/libcuda.so.1
 export LD_LIBRARY_PATH=${WORK_DIR}/cudalib:${LD_LIBRARY_PATH:-}
 
-./bin/semproxy -ex 100
+mkdir -p ${SRC_DIR}/snapshots
+mkdir -p ${SRC_DIR}/sismos
+./bin/semproxy --ex 100 --snapshots --snap-interval 50 --snap-folder ${SRC_DIR}/snapshots \
+    --receivers-file ${SRC_DIR}/rcv.txt --seismo-folder ${SRC_DIR}/sismos

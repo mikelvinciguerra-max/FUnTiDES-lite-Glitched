@@ -12,6 +12,7 @@
 #include <sem_solver_acoustic.h>
 #include <source_and_receiver_utils.h>
 
+#include <algorithm>
 #include <chrono>
 #include <cxxopts.hpp>
 #include <filesystem>
@@ -45,9 +46,7 @@ SEMproxy::SEMproxy(const SemProxyOptions& opt)
   domain_size_[1] = opt.ly;
   domain_size_[2] = opt.lz;
 
-  rcv_coord_[0] = opt.rcvx;
-  rcv_coord_[1] = opt.rcvy;
-  rcv_coord_[2] = opt.rcvz;
+  loadReceivers(opt);
 
   bool isModelOnNodes = opt.isModelOnNodes;
   isElastic_ = opt.isElastic;
@@ -176,23 +175,26 @@ void SEMproxy::run()
     // Save pressure at receiver
     const int order = m_mesh->getOrder();
 
-    float varnp1 = 0.0;
-    for (int i = 0; i < order + 1; i++)
+    for (int r = 0; r < static_cast<int>(rcv_coords_.size()); r++)
     {
-      for (int j = 0; j < order + 1; j++)
+      float varnp1 = 0.0;
+      for (int i = 0; i < order + 1; i++)
       {
-        for (int k = 0; k < order + 1; k++)
+        for (int j = 0; j < order + 1; j++)
         {
-          int nodeIdx = m_mesh->globalNodeIndex(rhsElementRcv[0], i, j, k);
-          int globalNodeOnElement =
-              i + j * (order + 1) + k * (order + 1) * (order + 1);
-          varnp1 +=
-              pnGlobal(nodeIdx, i2) * rhsWeightsRcv(0, globalNodeOnElement);
+          for (int k = 0; k < order + 1; k++)
+          {
+            int nodeIdx = m_mesh->globalNodeIndex(rhsElementRcv[r], i, j, k);
+            int globalNodeOnElement =
+                i + j * (order + 1) + k * (order + 1) * (order + 1);
+            varnp1 +=
+                pnGlobal(nodeIdx, i2) * rhsWeightsRcv(r, globalNodeOnElement);
+          }
         }
       }
-    }
 
-    pnAtReceiver(0, indexTimeSample) = varnp1;
+      pnAtReceiver(r, indexTimeSample) = varnp1;
+    }
 
     swap(i1, i2);
 
@@ -202,6 +204,8 @@ void SEMproxy::run()
 
     totalOutputTime += system_clock::now() - startOutputTime;
   }
+
+  if (is_sismos_) saveSismos();
 
   float kerneltime_ms = time_point_cast<microseconds>(totalComputeTime)
                             .time_since_epoch()
@@ -214,6 +218,12 @@ void SEMproxy::run()
        << endl;
   cout << "---- Elapsed Output Time : " << outputtime_ms / 1E6 << " seconds."
        << endl;
+  if (is_sismos_)
+  {
+    cout << "---- Seismograms         : " << rcv_coords_.size()
+         << " receivers, " << rcv_coords_.size() * num_sample_ * sizeof(float)
+         << " bytes, " << seismo_write_seconds_ << " seconds." << endl;
+  }
   if (is_snapshots_)
   {
     cout << "---- Snapshots           : " << snap_count_ << " files, "
@@ -234,11 +244,13 @@ void SEMproxy::init_arrays()
   myRHSTerm = allocateArray2D<arrayReal>(myNumberOfRHS, num_sample_, "RHSTerm");
   pnGlobal =
       allocateArray2D<arrayReal>(m_mesh->getNumberOfNodes(), 2, "pnGlobal");
-  pnAtReceiver = allocateArray2D<arrayReal>(1, num_sample_, "pnAtReceiver");
-  // Receiver
-  rhsElementRcv = allocateVector<vectorInt>(1, "rhsElementRcv");
+  const int nbReceivers = static_cast<int>(rcv_coords_.size());
+  pnAtReceiver =
+      allocateArray2D<arrayReal>(nbReceivers, num_sample_, "pnAtReceiver");
+  // Receivers
+  rhsElementRcv = allocateVector<vectorInt>(nbReceivers, "rhsElementRcv");
   rhsWeightsRcv = allocateArray2D<arrayReal>(
-      1, m_mesh->getNumberOfPointsPerElement(), "RHSWeightRcv");
+      nbReceivers, m_mesh->getNumberOfPointsPerElement(), "RHSWeightRcv");
 }
 
 // Initialize sources
@@ -322,51 +334,164 @@ void SEMproxy::init_source()
       throw std::runtime_error("Unsupported order: " + std::to_string(order));
   }
 
-  // Receiver computation
-  int receiver_index = floor((rcv_coord_[0] * ex) / lx) +
-                       floor((rcv_coord_[1] * ey) / ly) * ex +
-                       floor((rcv_coord_[2] * ez) / lz) * ey * ex;
-
-  for (int i = 0; i < 1; i++)
+  // Receivers computation (one element + one set of weights per receiver)
+  for (int r = 0; r < static_cast<int>(rcv_coords_.size()); r++)
   {
-    rhsElementRcv[i] = receiver_index;
+    const std::array<float, 3>& rcv = rcv_coords_[r];
+
+    int receiver_index = std::min<int>(floor((rcv[0] * ex) / lx), ex - 1) +
+                         std::min<int>(floor((rcv[1] * ey) / ly), ey - 1) * ex +
+                         std::min<int>(floor((rcv[2] * ez) / lz), ez - 1) * ey *
+                             ex;
+    rhsElementRcv[r] = receiver_index;
+
+    // Get coordinates of the corners of the receiver element
+    float cornerCoordsRcv[8][3];
+    I = 0;
+    for (int k : nodes_corner)
+    {
+      for (int j : nodes_corner)
+      {
+        for (int i : nodes_corner)
+        {
+          int nodeIdx = m_mesh->globalNodeIndex(rhsElementRcv[r], i, j, k);
+          cornerCoordsRcv[I][0] = m_mesh->nodeCoord(nodeIdx, 0);
+          cornerCoordsRcv[I][2] = m_mesh->nodeCoord(nodeIdx, 2);
+          cornerCoordsRcv[I][1] = m_mesh->nodeCoord(nodeIdx, 1);
+          I++;
+        }
+      }
+    }
+
+    switch (order)
+    {
+      case 1:
+        SourceAndReceiverUtils::ComputeRHSWeights<1>(cornerCoordsRcv, rcv,
+                                                     rhsWeightsRcv, r);
+        break;
+      case 2:
+        SourceAndReceiverUtils::ComputeRHSWeights<2>(cornerCoordsRcv, rcv,
+                                                     rhsWeightsRcv, r);
+        break;
+      case 3:
+        SourceAndReceiverUtils::ComputeRHSWeights<3>(cornerCoordsRcv, rcv,
+                                                     rhsWeightsRcv, r);
+        break;
+      default:
+        throw std::runtime_error("Unsupported order: " +
+                                 std::to_string(order));
+    }
+  }
+}
+
+// Read the receivers: from --receivers-file (one "x y z" per line, '#' starts
+// a comment, commas allowed), or the single receiver --rcvx/--rcvy/--rcvz.
+void SEMproxy::loadReceivers(const SemProxyOptions& opt)
+{
+  is_sismos_ = opt.sismos || !opt.receivers_file.empty();
+  seismo_folder_ = opt.seismo_folder;
+  rcv_coords_.clear();
+
+  if (opt.receivers_file.empty())
+  {
+    rcv_coords_.push_back({opt.rcvx, opt.rcvy, opt.rcvz});
+  }
+  else
+  {
+    std::ifstream f(opt.receivers_file);
+    if (!f)
+      throw std::runtime_error("Cannot open receivers file: " +
+                               opt.receivers_file);
+    std::string line;
+    int lineNumber = 0;
+    while (std::getline(f, line))
+    {
+      lineNumber++;
+      const auto hash = line.find('#');
+      if (hash != std::string::npos) line.erase(hash);
+      std::replace(line.begin(), line.end(), ',', ' ');
+      std::istringstream iss(line);
+      float x, y, z;
+      if (!(iss >> x))
+        continue;  // blank or comment-only line
+      if (!(iss >> y >> z))
+        throw std::runtime_error(opt.receivers_file + ":" +
+                                 std::to_string(lineNumber) +
+                                 ": expected 'x y z'");
+      rcv_coords_.push_back({x, y, z});
+    }
+    if (rcv_coords_.empty())
+      throw std::runtime_error("No receiver found in " + opt.receivers_file);
   }
 
-  // Get coordinates of the corners of the receiver element
-  float cornerCoordsRcv[8][3];
-  I = 0;
-  for (int k : nodes_corner)
+  // every receiver must lie inside the domain
+  for (size_t r = 0; r < rcv_coords_.size(); r++)
   {
-    for (int j : nodes_corner)
+    const auto& c = rcv_coords_[r];
+    if (c[0] < 0 || c[0] > opt.lx || c[1] < 0 || c[1] > opt.ly || c[2] < 0 ||
+        c[2] > opt.lz)
+      throw std::runtime_error("Receiver " + std::to_string(r) + " (" +
+                               std::to_string(c[0]) + ", " +
+                               std::to_string(c[1]) + ", " +
+                               std::to_string(c[2]) + ") is outside the domain");
+  }
+
+  std::cout << rcv_coords_.size() << " receiver(s)"
+            << (is_sismos_ ? ", seismograms will be saved in '" +
+                                  seismo_folder_ + "'"
+                            : ", seismograms not saved (use --sismos)")
+            << std::endl;
+}
+
+// Write all the seismograms at the end of the simulation:
+//   sismos.bin        : nbReceivers x num_sample_ float32, receiver-major
+//                        (row r = seismogram of receiver r, no compression)
+//   sismos_meta.json  : shape, dt, receiver coordinates
+void SEMproxy::saveSismos()
+{
+  const auto start = std::chrono::steady_clock::now();
+  namespace fs = std::filesystem;
+  fs::create_directories(seismo_folder_);
+
+  const int nbReceivers = static_cast<int>(rcv_coords_.size());
+
+#ifdef USE_KOKKOS
+  Kokkos::fence();
+#endif
+
+  {
+    std::ofstream f(seismo_folder_ + "/sismos.bin", std::ios::binary);
+    if (!f) throw std::runtime_error("Cannot write sismos.bin");
+    std::vector<float> row(num_sample_);
+    for (int r = 0; r < nbReceivers; r++)
     {
-      for (int i : nodes_corner)
-      {
-        int nodeIdx = m_mesh->globalNodeIndex(rhsElementRcv[0], i, j, k);
-        cornerCoordsRcv[I][0] = m_mesh->nodeCoord(nodeIdx, 0);
-        cornerCoordsRcv[I][2] = m_mesh->nodeCoord(nodeIdx, 2);
-        cornerCoordsRcv[I][1] = m_mesh->nodeCoord(nodeIdx, 1);
-        I++;
-      }
+      for (int t = 0; t < num_sample_; t++) row[t] = pnAtReceiver(r, t);
+      f.write(reinterpret_cast<const char*>(row.data()),
+              row.size() * sizeof(float));
     }
   }
 
-  switch (order)
   {
-    case 1:
-      SourceAndReceiverUtils::ComputeRHSWeights<1>(cornerCoordsRcv, rcv_coord_,
-                                                   rhsWeightsRcv);
-      break;
-    case 2:
-      SourceAndReceiverUtils::ComputeRHSWeights<2>(cornerCoordsRcv, rcv_coord_,
-                                                   rhsWeightsRcv);
-      break;
-    case 3:
-      SourceAndReceiverUtils::ComputeRHSWeights<3>(cornerCoordsRcv, rcv_coord_,
-                                                   rhsWeightsRcv);
-      break;
-    default:
-      throw std::runtime_error("Unsupported order: " + std::to_string(order));
+    std::ofstream f(seismo_folder_ + "/sismos_meta.json");
+    if (!f) throw std::runtime_error("Cannot write sismos_meta.json");
+    f << "{\n"
+      << "  \"dtype\": \"float32\",\n"
+      << "  \"file\": \"sismos.bin\",\n"
+      << "  \"shape\": [" << nbReceivers << ", " << num_sample_ << "],\n"
+      << "  \"layout\": \"receiver-major: row r = seismogram of receiver r\",\n"
+      << "  \"dt\": " << dt_ << ",\n"
+      << "  \"receivers\": [";
+    for (int r = 0; r < nbReceivers; r++)
+    {
+      f << (r ? ", " : "") << "[" << rcv_coords_[r][0] << ", "
+        << rcv_coords_[r][1] << ", " << rcv_coords_[r][2] << "]";
+    }
+    f << "]\n}\n";
   }
+
+  seismo_write_seconds_ +=
+      std::chrono::duration<double>(std::chrono::steady_clock::now() - start)
+          .count();
 }
 
 SolverFactory::implemType SEMproxy::getImplem(string implemArg)

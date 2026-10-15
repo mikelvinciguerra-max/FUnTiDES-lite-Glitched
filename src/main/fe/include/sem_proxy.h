@@ -87,6 +87,17 @@ class SEMproxy
  private:
   // write nodes.bin (node coordinates) and snapshots_meta.json
   void initSnapshots(const SemProxyOptions& opt);
+
+  // fill rcv_coords_ from --receivers-file, or from --rcvx/--rcvy/--rcvz
+  void loadReceivers(const SemProxyOptions& opt);
+
+  // write sismos.bin and sismos_meta.json (called at the end of run())
+  void saveSismos();
+
+  // seismograms
+  bool is_sismos_ = false;
+  std::string seismo_folder_ = "sismos";
+  double seismo_write_seconds_ = 0.0;
   int i1 = 0;
   int i2 = 1;
 
@@ -95,7 +106,7 @@ class SEMproxy
   int nb_elements_[3] = {0};
   int nb_nodes_[3] = {0};
   std::array<float, 3> src_coord_ = {0};
-  std::array<float, 3> rcv_coord_ = {0};
+  std::vector<std::array<float, 3>> rcv_coords_;
   float domain_size_[3] = {0};
 
   // snapshots
