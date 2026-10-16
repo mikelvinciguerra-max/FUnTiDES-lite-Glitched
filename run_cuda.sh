@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH -C V100
+#SBATCH -C sirocco
 #SBATCH --job-name=semproxy_cuda
 #SBATCH --output=logs/semproxy_cuda.log
 #SBATCH --time=00:30:00
