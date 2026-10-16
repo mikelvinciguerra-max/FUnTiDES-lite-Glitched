@@ -89,11 +89,11 @@ if __name__ == "__main__":
     elif (not sys.argv[1].endswith(".bin")):
         print("The argument must be a .bin file !")
         sys.exit(1)
-    elif (sys.argv[1].startswith("snapshots")):
-        if (sys.argv[2] == "2d" or"2D"):
+    elif (sys.argv[1].startswith("snapshot")):
+        if (sys.argv[2] == "2d" or sys.argv[2] == "2D"):
             visualize2D_snapshots(sys.argv[1])
-        elif (sys.argv[2] == "3d" or "3D"):
-            visualize3D_snapshots(sys.argv[1])
+        elif (sys.argv[2] == "3d" or sys.argv[2] == "3D"):
+            visualize3D_snapshots(sys.argv[1]) 
         else:
             print("The second argument must be either '2d' or '3d' !")
             sys.exit(1)
