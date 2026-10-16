@@ -89,7 +89,7 @@ if __name__ == "__main__":
     elif (not sys.argv[1].endswith(".bin")):
         print("The argument must be a .bin file !")
         sys.exit(1)
-    elif (sys.argv[1].startswith("snapshot")):
+    elif (sys.argv[1].startswith("../snapshot")):
         if (sys.argv[2] == "2d" or sys.argv[2] == "2D"):
             visualize2D_snapshots(sys.argv[1])
         elif (sys.argv[2] == "3d" or sys.argv[2] == "3D"):
@@ -97,7 +97,7 @@ if __name__ == "__main__":
         else:
             print("The second argument must be either '2d' or '3d' !")
             sys.exit(1)
-    elif (sys.argv[1].startswith("sismos")):
+    elif (sys.argv[1].startswith("../sismos")):
         visualize_sismo(sys.argv[1])
     else:
         print("The argument must be either a snapshot or a sismo file !")
