@@ -142,7 +142,7 @@ class SEMsolverElastic : public SEMSolverBase
   /**
    * @brief Output displacement values at a specific time step.
    *
-   * Typically used for recording seismograms or snapshots.
+   * Typically used for recording sismograms or snapshots.
    *
    * @param indexTimeStep Time index to output.
    * @param i1 Index for displacement buffer.

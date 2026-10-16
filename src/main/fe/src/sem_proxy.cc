@@ -251,9 +251,9 @@ void SEMproxy::run()
        << endl;
   if (is_sismos_)
   {
-    cout << "---- Seismograms         : " << rcv_coords_.size()
+    cout << "---- Sismograms         : " << rcv_coords_.size()
          << " receivers, " << rcv_coords_.size() * num_sample_ * sizeof(float)
-         << " bytes, " << seismo_write_seconds_ << " seconds." << endl;
+         << " bytes, " << sismo_write_seconds_ << " seconds." << endl;
   }
   if (is_snapshots_)
   {
@@ -422,7 +422,7 @@ void SEMproxy::init_source()
 void SEMproxy::loadReceivers(const SemProxyOptions& opt)
 {
   is_sismos_ = opt.sismos || !opt.receivers_file.empty();
-  seismo_folder_ = opt.seismo_folder;
+  sismo_folder_ = opt.sismo_folder;
   rcv_coords_.clear();
 
   if (opt.receivers_file.empty())
@@ -470,21 +470,21 @@ void SEMproxy::loadReceivers(const SemProxyOptions& opt)
   }
 
   std::cout << rcv_coords_.size() << " receiver(s)"
-            << (is_sismos_ ? ", seismograms will be saved in '" +
-                                  seismo_folder_ + "'"
-                            : ", seismograms not saved (use --sismos)")
+            << (is_sismos_ ? ", sismograms will be saved in '" +
+                                  sismo_folder_ + "'"
+                            : ", sismograms not saved (use --sismos)")
             << std::endl;
 }
 
-// Write all the seismograms at the end of the simulation:
+// Write all the sismograms at the end of the simulation:
 //   sismos.bin        : nbReceivers x num_sample_ float32, receiver-major
-//                        (row r = seismogram of receiver r, no compression)
+//                        (row r = sismogram of receiver r, no compression)
 //   sismos_meta.json  : shape, dt, receiver coordinates
 void SEMproxy::saveSismos()
 {
   const auto start = std::chrono::steady_clock::now();
   namespace fs = std::filesystem;
-  fs::create_directories(seismo_folder_);
+  fs::create_directories(sismo_folder_);
 
   const int nbReceivers = static_cast<int>(rcv_coords_.size());
 
@@ -493,7 +493,7 @@ void SEMproxy::saveSismos()
 #endif
 
   {
-    std::ofstream f(seismo_folder_ + "/sismos.bin", std::ios::binary);
+    std::ofstream f(sismo_folder_ + "/sismos.bin", std::ios::binary);
     if (!f) throw std::runtime_error("Cannot write sismos.bin");
     std::vector<float> row(num_sample_);
     for (int r = 0; r < nbReceivers; r++)
@@ -505,13 +505,13 @@ void SEMproxy::saveSismos()
   }
 
   {
-    std::ofstream f(seismo_folder_ + "/sismos_meta.json");
+    std::ofstream f(sismo_folder_ + "/sismos_meta.json");
     if (!f) throw std::runtime_error("Cannot write sismos_meta.json");
     f << "{\n"
       << "  \"dtype\": \"float32\",\n"
       << "  \"file\": \"sismos.bin\",\n"
       << "  \"shape\": [" << nbReceivers << ", " << num_sample_ << "],\n"
-      << "  \"layout\": \"receiver-major: row r = seismogram of receiver r\",\n"
+      << "  \"layout\": \"receiver-major: row r = sismogram of receiver r\",\n"
       << "  \"dt\": " << dt_ << ",\n"
       << "  \"receivers\": [";
     for (int r = 0; r < nbReceivers; r++)
@@ -522,7 +522,7 @@ void SEMproxy::saveSismos()
     f << "]\n}\n";
   }
 
-  seismo_write_seconds_ +=
+  sismo_write_seconds_ +=
       std::chrono::duration<double>(std::chrono::steady_clock::now() - start)
           .count();
 }
