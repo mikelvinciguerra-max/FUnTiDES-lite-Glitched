@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH -C sirocco
+#SBATCH -C V100
 #SBATCH --job-name=semproxy_cuda
 #SBATCH --output=logs/semproxy_cuda.log
 #SBATCH --time=00:30:00
@@ -7,6 +7,18 @@
 #SBATCH --ntasks-per-node=1
 #SBATCH --cpus-per-task=4
 #SBATCH --mem=32G
+
+# Usage :  mkdir -p logs && sbatch run_cuda.sh
+# (le dossier logs/ doit exister avant sbatch, sinon le job échoue sans message)
+#
+# Paramètres modifiables sans toucher au script :
+#   EX=150 SNAP_INTERVAL=10 sbatch run_cuda.sh
+# (sbatch transmet l'environnement du shell au job)
+EX=${EX:-100}
+EY=${EY:-50}
+EZ=${EZ:-50}
+TIMEMAX=${TIMEMAX:-1.5}
+SNAP_INTERVAL=${SNAP_INTERVAL:-50}   # un snapshot toutes les N itérations
 
 set -e
 module purge
@@ -16,17 +28,19 @@ module load git
 module load cuda-toolkit/12.9.1
 
 SRC_DIR=${SLURM_SUBMIT_DIR:-$(pwd)}
-WORK_DIR=${TMPDIR:-/tmp}/semproxy_cuda_${SLURM_JOB_ID:-local}
+JOB=${SLURM_JOB_ID:-local}
+WORK_DIR=${TMPDIR:-/tmp}/semproxy_cuda_${JOB}
 
-# Kokkos est un sous-module git
 cd ${SRC_DIR}
 git submodule update --init --recursive
 
-# Copie du projet (sans le dossier build) pour ne pas toucher au code original
 rm -rf ${WORK_DIR} && mkdir -p ${WORK_DIR}
-tar -C ${SRC_DIR} --exclude=./build -cf - . | tar -C ${WORK_DIR} -xf -
+tar -C ${SRC_DIR} \
+    --exclude=./build --exclude=./snapshots --exclude=./sismos \
+    --exclude=./metrics --exclude=./logs --exclude=./bench_results \
+    --exclude='./bench_out_*' \
+    -cf - . | tar -C ${WORK_DIR} -xf -
 
-# Contournement nvcc : fmin/fmax ambigus -> std::fmin/std::fmax (dans la copie seulement)
 find ${WORK_DIR}/src -type f \( -name '*.h' -o -name '*.hpp' -o -name '*.cc' -o -name '*.cpp' \) \
     -exec sed -i -E 's/([^:_a-zA-Z0-9])(fmin|fmax)\(/\1std::\2(/g' {} +
 
@@ -45,7 +59,26 @@ mkdir -p ${WORK_DIR}/cudalib
 ln -sf ${LIBCUDA_DIR}/libcuda.so.1 ${WORK_DIR}/cudalib/libcuda.so.1
 export LD_LIBRARY_PATH=${WORK_DIR}/cudalib:${LD_LIBRARY_PATH:-}
 
-mkdir -p ${SRC_DIR}/snapshots
-mkdir -p ${SRC_DIR}/sismos
-./bin/semproxy --ex 100 --snapshots --snap-interval 50 --snap-folder ${SRC_DIR}/snapshots \
-    --receivers-file ${SRC_DIR}/rcv.txt --sismo-folder ${SRC_DIR}/sismos
+SNAP_DIR=${SRC_DIR}/snapshots
+SISMO_DIR=${SRC_DIR}/sismos
+METRICS_DIR=${SRC_DIR}/metrics
+mkdir -p ${SNAP_DIR} ${SISMO_DIR} ${METRICS_DIR}
+
+RCV_FILE=${SRC_DIR}/rcv.txt
+if [ ! -f "${RCV_FILE}" ]; then
+    RCV_FILE=${METRICS_DIR}/rcv_defaut_${JOB}.txt
+    printf '1410 1010 1010\n1010 1410 1010\n600 600 600\n' > ${RCV_FILE}
+    echo "ATTENTION : ${SRC_DIR}/rcv.txt introuvable, récepteurs par défaut : ${RCV_FILE}"
+fi
+
+./bin/semproxy \
+    --ex ${EX} --ey ${EY} --ez ${EZ} --timemax ${TIMEMAX} \
+    --snapshots --snap-interval ${SNAP_INTERVAL} --snap-folder ${SNAP_DIR} \
+    --receivers-file ${RCV_FILE} --sismo-folder ${SISMO_DIR} \
+    --metrics-file ${METRICS_DIR}/run_${JOB}.json \
+    --metrics-csv ${METRICS_DIR}/all.csv \
+    --run-label run_cuda
+
+echo "Snapshots : ${SNAP_DIR}"
+echo "Sismos    : ${SISMO_DIR}"
+echo "Métriques : ${METRICS_DIR}/run_${JOB}.json (et all.csv)"
