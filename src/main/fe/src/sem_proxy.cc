@@ -11,6 +11,7 @@
 #include <cartesian_unstruct_builder.h>
 #include <sem_solver_acoustic.h>
 #include <source_and_receiver_utils.h>
+#include <unistd.h>
 
 #include <algorithm>
 #include <chrono>
@@ -22,10 +23,20 @@
 #include <sstream>
 #include <variant>
 
+#include "run_metrics.h"
+
 using namespace SourceAndReceiverUtils;
 
 SEMproxy::SEMproxy(const SemProxyOptions& opt)
 {
+  t_ctor_start_ = std::chrono::steady_clock::now();
+  metrics_file_ = opt.metrics_file;
+  metrics_csv_ = opt.metrics_csv;
+  run_label_ = opt.run_label;
+  opt_implem_ = opt.implem;
+  opt_method_ = opt.method;
+  opt_mesh_ = opt.mesh;
+
   const int order = opt.order;
   nb_elements_[0] = opt.ex;
   nb_elements_[1] = opt.ey;
@@ -142,6 +153,10 @@ SEMproxy::SEMproxy(const SemProxyOptions& opt)
   std::cout << "Time step is " << dt_ << "s" << std::endl;
   std::cout << "Simulated time is " << timemax_ << "s" << std::endl;
 
+  t_init_s_ = std::chrono::duration<double>(std::chrono::steady_clock::now() -
+                                            t_ctor_start_)
+                  .count();
+
 }
 
 void SEMproxy::run()
@@ -151,13 +166,21 @@ void SEMproxy::run()
 
   SEMsolverDataAcoustic solverData(i1, i2, myRHSTerm, pnGlobal, rhsElement,
                                    rhsWeights);
+  const auto runStart = std::chrono::steady_clock::now();
 
   for (int indexTimeSample = 0; indexTimeSample < num_sample_;
        indexTimeSample++)
   {
     startComputeTime = system_clock::now();
     m_solver->computeOneStep(dt_, indexTimeSample, solverData);
+#ifdef USE_KOKKOS
+    Kokkos::fence();  // kernels are asynchronous: wait, so that the compute
+                      // time is not charged to the next output
+#endif
     totalComputeTime += system_clock::now() - startComputeTime;
+    t_compute_s_ += std::chrono::duration<double>(
+                        system_clock::now() - startComputeTime)
+                        .count();
 
     startOutputTime = system_clock::now();
 
@@ -175,6 +198,7 @@ void SEMproxy::run()
     // Save pressure at receiver
     const int order = m_mesh->getOrder();
 
+    const auto startReceivers = std::chrono::steady_clock::now();
     for (int r = 0; r < static_cast<int>(rcv_coords_.size()); r++)
     {
       float varnp1 = 0.0;
@@ -195,6 +219,9 @@ void SEMproxy::run()
 
       pnAtReceiver(r, indexTimeSample) = varnp1;
     }
+    t_receivers_s_ += std::chrono::duration<double>(
+                          std::chrono::steady_clock::now() - startReceivers)
+                          .count();
 
     swap(i1, i2);
 
@@ -206,6 +233,10 @@ void SEMproxy::run()
   }
 
   if (is_sismos_) saveSismos();
+
+  t_run_s_ = std::chrono::duration<double>(std::chrono::steady_clock::now() -
+                                           runStart)
+                 .count();
 
   float kerneltime_ms = time_point_cast<microseconds>(totalComputeTime)
                             .time_since_epoch()
@@ -231,6 +262,8 @@ void SEMproxy::run()
          << endl;
   }
   cout << "------------------------------------------------ " << endl;
+
+  writeMetrics();
 }
 
 // Initialize arrays
@@ -492,6 +525,109 @@ void SEMproxy::saveSismos()
   seismo_write_seconds_ +=
       std::chrono::duration<double>(std::chrono::steady_clock::now() - start)
           .count();
+}
+
+// Collect the timings, data sizes and run parameters, and write them as JSON
+// (--metrics-file) and/or as one CSV row (--metrics-csv). No-op if neither is
+// given. Never stops the program: a failure only prints a warning.
+void SEMproxy::writeMetrics()
+{
+  if (metrics_file_.empty() && metrics_csv_.empty()) return;
+
+  const double mega = 1e6;
+  const double tSnap = snap_write_seconds_;
+  const double tSismo = is_sismos_ ? sismo_write_seconds_ : 0.0;
+  const double tIo = tSnap + tSismo;
+  const unsigned long long nodesBytes =
+      is_snapshots_
+          ? static_cast<unsigned long long>(m_mesh->getNumberOfNodes()) * 3 *
+                sizeof(float)
+          : 0ULL;
+  const unsigned long long sismoBytes =
+      is_sismos_ ? static_cast<unsigned long long>(rcv_coords_.size()) *
+                       num_sample_ * sizeof(float)
+                 : 0ULL;
+  const unsigned long long totalBytes = snap_bytes_ + nodesBytes + sismoBytes;
+
+  RunMetrics m;
+
+  // identification
+  m.addStr("label", run_label_);
+  char host[256] = "unknown";
+  gethostname(host, sizeof(host) - 1);
+  m.addStr("hostname", host);
+  const char* jobId = std::getenv("SLURM_JOB_ID");
+  m.addStr("slurm_job_id", jobId ? jobId : "");
+#ifdef USE_KOKKOS
+  m.addStr("backend", Kokkos::DefaultExecutionSpace::name());
+  m.addInt("host_threads", Kokkos::DefaultHostExecutionSpace().concurrency());
+#else
+  m.addStr("backend", "std::vector");
+  m.addInt("host_threads", 1);
+#endif
+
+  // parameters of the run
+  m.addStr("method", opt_method_);
+  m.addStr("implem", opt_implem_);
+  m.addStr("mesh", opt_mesh_);
+  m.addInt("order", m_mesh->getOrder());
+  m.addInt("ex", nb_elements_[0]);
+  m.addInt("ey", nb_elements_[1]);
+  m.addInt("ez", nb_elements_[2]);
+  m.addInt("nodes", m_mesh->getNumberOfNodes());
+  m.addInt("elements", m_mesh->getNumberOfElements());
+  m.addNum("dt", dt_);
+  m.addNum("timemax", timemax_);
+  m.addInt("iterations", num_sample_);
+  m.addInt("snapshots", is_snapshots_ ? 1 : 0);
+  m.addInt("snap_interval", is_snapshots_ ? snap_time_interval_ : 0);
+  m.addInt("sismos", is_sismos_ ? 1 : 0);
+  m.addInt("receivers", static_cast<long long>(rcv_coords_.size()));
+
+  // timings (seconds)
+  m.addNum("t_init_s", t_init_s_);
+  m.addNum("t_run_s", t_run_s_);
+  m.addNum("t_total_s", t_init_s_ + t_run_s_);
+  m.addNum("t_compute_s", t_compute_s_);
+  m.addNum("t_compute_per_step_ms",
+           num_sample_ > 0 ? 1e3 * t_compute_s_ / num_sample_ : 0.0);
+  m.addNum("t_snapshots_s", tSnap);
+  m.addNum("t_sismos_s", tSismo);
+  m.addNum("t_receivers_s", t_receivers_s_);
+  m.addNum("t_io_s", tIo);
+  m.addNum("t_other_s",
+           t_run_s_ - t_compute_s_ - tIo - t_receivers_s_);  // stdout, swap...
+  m.addNum("io_fraction", t_run_s_ > 0 ? tIo / t_run_s_ : 0.0);
+
+  // data written
+  m.addInt("snapshot_files", snap_count_);
+  m.addInt("snapshot_bytes", static_cast<long long>(snap_bytes_));
+  m.addInt("nodes_bytes", static_cast<long long>(nodesBytes));
+  m.addInt("sismo_bytes", static_cast<long long>(sismoBytes));
+  m.addInt("total_bytes", static_cast<long long>(totalBytes));
+  m.addNum("snapshot_MBps", tSnap > 0 ? snap_bytes_ / mega / tSnap : 0.0);
+  m.addNum("io_MBps", tIo > 0 ? (snap_bytes_ + sismoBytes) / mega / tIo : 0.0);
+
+  // memory of the host process
+  m.addNum("peak_rss_MiB", peakRssMiB());
+
+  try
+  {
+    if (!metrics_file_.empty())
+    {
+      m.writeJson(metrics_file_);
+      std::cout << "Metrics written to " << metrics_file_ << std::endl;
+    }
+    if (!metrics_csv_.empty())
+    {
+      m.appendCsv(metrics_csv_);
+      std::cout << "Metrics appended to " << metrics_csv_ << std::endl;
+    }
+  }
+  catch (const std::exception& e)
+  {
+    std::cerr << "WARNING: metrics not written: " << e.what() << std::endl;
+  }
 }
 
 SolverFactory::implemType SEMproxy::getImplem(string implemArg)

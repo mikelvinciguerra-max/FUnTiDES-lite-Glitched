@@ -14,6 +14,7 @@
 #include <solver_factory.h>
 #include <utils.h>
 
+#include <chrono>
 #include <memory>
 #include <string>
 #include <variant>
@@ -94,10 +95,24 @@ class SEMproxy
   // write sismos.bin and sismos_meta.json (called at the end of run())
   void saveSismos();
 
-  // seismograms
+  // write the run metrics (JSON and/or CSV) at the end of run()
+  void writeMetrics();
+
+  // metrics
+  std::string metrics_file_;
+  std::string metrics_csv_;
+  std::string run_label_;
+  std::string opt_implem_, opt_method_, opt_mesh_;
+  std::chrono::steady_clock::time_point t_ctor_start_;
+  double t_init_s_ = 0.0;         // constructor: mesh, solver init, arrays
+  double t_compute_s_ = 0.0;      // sum of computeOneStep (device synchronised)
+  double t_receivers_s_ = 0.0;    // receiver extraction in the time loop
+  double t_run_s_ = 0.0;          // whole run(): compute + outputs
+
+  // sismograms
   bool is_sismos_ = false;
-  std::string seismo_folder_ = "sismos";
-  double seismo_write_seconds_ = 0.0;
+  std::string sismo_folder_ = "sismos";
+  double sismo_write_seconds_ = 0.0;
   int i1 = 0;
   int i2 = 1;
 

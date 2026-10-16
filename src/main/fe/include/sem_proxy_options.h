@@ -27,15 +27,20 @@ class SemProxyOptions
   bool isModelOnNodes = false;
   bool isElastic = false;
 
-  // seismograms (pressure at a list of receivers, saved at the end)
-  bool sismos = false;                    // enable seismogram saving
+  // sismograms (pressure at a list of receivers, saved at the end)
+  bool sismos = false;                    // enable sismogram saving
   std::string receivers_file = "";         // text file: one "x y z" per line
-  std::string seismo_folder = "sismos";   // output folder
+  std::string sismo_folder = "sismos";   // output folder
 
   // snapshots (full pnGlobal wavefield saved at regular intervals)
   bool snapshots = false;                       
   int snap_interval = 10;                       
   std::string snap_folder = "snapshots";        
+
+  // run metrics (timings, data sizes, parameters of the run)
+  std::string metrics_file = "";  // JSON, one file per run ("" = disabled)
+  std::string metrics_csv = "";   // CSV, one row appended per run
+  std::string run_label = "";     // free tag stored in the metrics
 
   void validate() const
   {
@@ -91,13 +96,19 @@ class SemProxyOptions
         cxxopts::value<int>(o.snap_interval))(
         "snap-folder", "Output folder of the snapshots (default = snapshots)",
         cxxopts::value<std::string>(o.snap_folder))(
-        "sismos", "Save the seismograms at the end of the simulation",
+        "sismos", "Save the sismograms at the end of the simulation",
         cxxopts::value<bool>(o.sismos))(
         "receivers-file",
         "Text file with one receiver per line: x y z (implies --sismos). "
         "Without it, the single receiver --rcvx/--rcvy/--rcvz is used",
         cxxopts::value<std::string>(o.receivers_file))(
-        "seismo-folder", "Output folder of the seismograms (default = sismos)",
-        cxxopts::value<std::string>(o.seismo_folder));
+        "sismo-folder", "Output folder of the sismograms (default = sismos)",
+        cxxopts::value<std::string>(o.sismo_folder))(
+        "metrics-file", "Write the run metrics (timings, sizes) as JSON",
+        cxxopts::value<std::string>(o.metrics_file))(
+        "metrics-csv", "Append the run metrics as one row of this CSV file",
+        cxxopts::value<std::string>(o.metrics_csv))(
+        "run-label", "Free label stored in the metrics (e.g. benchmark case)",
+        cxxopts::value<std::string>(o.run_label));
   }
 };
