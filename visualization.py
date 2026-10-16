@@ -4,6 +4,7 @@ import json
 import matplotlib.pyplot as plt
 import seaborn as sns
 import sys
+import pyvista as pv
 
 def visualize2D_snapshots(snapshot_file):
     num_nodes = 2050401
@@ -40,21 +41,29 @@ def visualize3D_snapshots(snapshot_file):
 
     nodes = np.fromfile(nodes_file, dtype=np.float32).reshape((num_nodes, 3))
 
-    X = nodes[:, 0]
-    Y = nodes[:, 1]
-    Z = nodes[:, 2]
+    # X = nodes[:, 0]
+    # Y = nodes[:, 1]
+    # Z = nodes[:, 2]
+    # P = np.fromfile(snapshot_file, dtype=np.float32)
+
+    # fig = plt.figure()
+    # ax = fig.add_subplot(111, projection="3d")
+    # scatter_plot = ax.scatter(X, Y, Z, c=P, cmap="viridis", s=2, alpha=0.5)
+
+    # fig.colorbar(scatter_plot, ax=ax, label="Pressure (Pa)")
+    # ax.set_title("3D Pressure Field Map")
+    # ax.set_xlabel("X Coordinate")
+    # ax.set_ylabel("Y Coordinate")
+    # ax.set_zlabel("Z Coordinate")
+    # plt.show()
+
     P = np.fromfile(snapshot_file, dtype=np.float32)
+    point_cloud = pv.PolyData(nodes)
+    plotter = pv.Plotter()
+    plotter.add_mesh(point_cloud, scalars=P, cmap="viridis", point_size=4)
+    # plotter.add_scalar_bar(title="Pressure (Pa)")
+    plotter.show(title="3D Pressure Field Map")
 
-    fig = plt.figure()
-    ax = fig.add_subplot(111, projection="3d")
-    scatter_plot = ax.scatter(X, Y, Z, c=P, cmap="viridis", s=2, alpha=0.5)
-
-    fig.colorbar(scatter_plot, ax=ax, label="Pressure (Pa)")
-    ax.set_title("3D Pressure Field Map")
-    ax.set_xlabel("X Coordinate")
-    ax.set_ylabel("Y Coordinate")
-    ax.set_zlabel("Z Coordinate")
-    plt.show()
 
 def visualize_sismo(sismo_file):
     data = np.fromfile(sismo_file, dtype=np.float32).reshape(3, 1499)
@@ -73,3 +82,12 @@ def visualize_sismo(sismo_file):
 
 
     
+if __name__ == "__main__":
+    # if (len(sys.argv) == 1):
+    #     print("Missing argument(s) !")
+    #     sys.exit(1)
+    # elif (not sys.argv[1].endswith(".bin")):
+    #     print("The argument must be a .bin file !")
+    #     sys.exit(1)
+
+
