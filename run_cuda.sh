@@ -8,17 +8,11 @@
 #SBATCH --cpus-per-task=4
 #SBATCH --mem=32G
 
-# Usage :  mkdir -p logs && sbatch run_cuda.sh
-# (le dossier logs/ doit exister avant sbatch, sinon le job échoue sans message)
-#
-# Paramètres modifiables sans toucher au script :
-#   EX=150 SNAP_INTERVAL=10 sbatch run_cuda.sh
-# (sbatch transmet l'environnement du shell au job)
 EX=${EX:-100}
 EY=${EY:-50}
 EZ=${EZ:-50}
 TIMEMAX=${TIMEMAX:-1.5}
-SNAP_INTERVAL=${SNAP_INTERVAL:-50}   # un snapshot toutes les N itérations
+SNAP_INTERVAL=${SNAP_INTERVAL:-50}  
 
 set -e
 module purge
@@ -46,11 +40,29 @@ find ${WORK_DIR}/src -type f \( -name '*.h' -o -name '*.hpp' -o -name '*.cc' -o 
 
 mkdir -p ${WORK_DIR}/build && cd ${WORK_DIR}/build
 
+GPU_NAME=$(nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null | head -n 1 || true)
+GPU_CC=$(nvidia-smi --query-gpu=compute_cap --format=csv,noheader 2>/dev/null | head -n 1 | tr -d ' ' || true)
+if [ -z "${KOKKOS_ARCH:-}" ]; then
+    case "${GPU_CC}" in
+        6.0) KOKKOS_ARCH=PASCAL60 ;;
+        6.1) KOKKOS_ARCH=PASCAL61 ;;
+        7.0) KOKKOS_ARCH=VOLTA70 ;;
+        7.5) KOKKOS_ARCH=TURING75 ;;
+        8.0) KOKKOS_ARCH=AMPERE80 ;;
+        8.6) KOKKOS_ARCH=AMPERE86 ;;
+        8.9) KOKKOS_ARCH=ADA89 ;;
+        9.0) KOKKOS_ARCH=HOPPER90 ;;
+        *)   KOKKOS_ARCH=VOLTA70
+             echo "ATTENTION : GPU non détecté (compute_cap='${GPU_CC}'), VOLTA70 par défaut" ;;
+    esac
+fi
+echo "Noeud : $(hostname)   GPU : ${GPU_NAME:-aucun}   -> -DKokkos_ARCH_${KOKKOS_ARCH}=ON"
+
 cmake .. \
     -DUSE_KOKKOS=ON \
     -DENABLE_CUDA=ON \
     -DUSE_VECTOR=OFF \
-    -DKokkos_ARCH_VOLTA70=ON
+    -DKokkos_ARCH_${KOKKOS_ARCH}=ON
 
 make
 
@@ -63,6 +75,7 @@ SNAP_DIR=${SRC_DIR}/snapshots
 SISMO_DIR=${SRC_DIR}/sismos
 METRICS_DIR=${SRC_DIR}/metrics
 mkdir -p ${SNAP_DIR} ${SISMO_DIR} ${METRICS_DIR}
+
 
 RCV_FILE=${SRC_DIR}/rcv.txt
 if [ ! -f "${RCV_FILE}" ]; then

@@ -20,12 +20,9 @@ QUICK=${QUICK:-0}
 SRC_DIR=${SLURM_SUBMIT_DIR:-$(pwd)}
 JOB=${SLURM_JOB_ID:-local}
 RES_DIR=${RES_DIR:-${SRC_DIR}/bench_results/${JOB}}
-LOCAL_OUT=${TMPDIR:-/tmp}/bench_out_${JOB}      # disque local du noeud
-SHARED_OUT=${SRC_DIR}/bench_out_${JOB}          # système de fichiers partagé
+LOCAL_OUT=${TMPDIR:-/tmp}/bench_out_${JOB}      
+SHARED_OUT=${SRC_DIR}/bench_out_${JOB}         
 
-# -----------------------------------------------------------------------------
-# Binaire : compilation (comme run_cuda.sh) sauf si BENCH_BIN est fourni
-# -----------------------------------------------------------------------------
 if [ -n "${BENCH_BIN:-}" ]; then
     BIN=${BENCH_BIN}
 else
@@ -44,12 +41,29 @@ else
         --exclude=./snapshots --exclude=./sismos --exclude=./logs --exclude="./bench_out_*" \
         -cf - . | tar -C ${WORK_DIR} -xf -
 
-    # Contournement nvcc : fmin/fmax ambigus (dans la copie seulement)
     find ${WORK_DIR}/src -type f \( -name '*.h' -o -name '*.hpp' -o -name '*.cc' -o -name '*.cpp' \) \
         -exec sed -i -E 's/([^:_a-zA-Z0-9])(fmin|fmax)\(/\1std::\2(/g' {} +
 
     mkdir -p ${WORK_DIR}/build && cd ${WORK_DIR}/build
-    cmake .. -DUSE_KOKKOS=ON -DENABLE_CUDA=ON -DUSE_VECTOR=OFF -DKokkos_ARCH_VOLTA70=ON
+    GPU_NAME=$(nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null | head -n 1 || true)
+    GPU_CC=$(nvidia-smi --query-gpu=compute_cap --format=csv,noheader 2>/dev/null | head -n 1 | tr -d ' ' || true)
+    if [ -z "${KOKKOS_ARCH:-}" ]; then
+        case "${GPU_CC}" in
+            6.0) KOKKOS_ARCH=PASCAL60 ;;
+            6.1) KOKKOS_ARCH=PASCAL61 ;;
+            7.0) KOKKOS_ARCH=VOLTA70 ;;
+            7.5) KOKKOS_ARCH=TURING75 ;;
+            8.0) KOKKOS_ARCH=AMPERE80 ;;
+            8.6) KOKKOS_ARCH=AMPERE86 ;;
+            8.9) KOKKOS_ARCH=ADA89 ;;
+            9.0) KOKKOS_ARCH=HOPPER90 ;;
+            *)   KOKKOS_ARCH=VOLTA70
+                 echo "ATTENTION : GPU non détecté (compute_cap='${GPU_CC}'), VOLTA70 par défaut" ;;
+        esac
+    fi
+    echo "Noeud : $(hostname)   GPU : ${GPU_NAME:-aucun}   -> -DKokkos_ARCH_${KOKKOS_ARCH}=ON"
+
+    cmake .. -DUSE_KOKKOS=ON -DENABLE_CUDA=ON -DUSE_VECTOR=OFF -DKokkos_ARCH_${KOKKOS_ARCH}=ON
     make
 
     LIBCUDA_DIR=/usr/lib64
@@ -61,9 +75,6 @@ fi
 
 mkdir -p "${RES_DIR}" "${LOCAL_OUT}" "${SHARED_OUT}"
 
-# -----------------------------------------------------------------------------
-# Conditions de l'expérience (à citer dans le rapport)
-# -----------------------------------------------------------------------------
 {
     echo "date        : $(date -Is)"
     echo "hostname    : $(hostname)"
@@ -77,13 +88,6 @@ mkdir -p "${RES_DIR}" "${LOCAL_OUT}" "${SHARED_OUT}"
     echo "--- stockage partagé (${SHARED_OUT})"; df -PT "${SHARED_OUT}" 2>/dev/null | tail -1
 } > "${RES_DIR}/bench_env.txt" 2>&1 || true
 
-# -----------------------------------------------------------------------------
-# Les configurations. Une ligne = un cas ; modifie le tableau à ta convenance.
-#   scénario  nom  ex ey ez  intervalle_snap(0=sans)  nb_récepteurs(0=sans)  destination
-#   (nom: sans ':' ni espace)   destination: local | shared
-# Les cas sans sortie (snap=0 et récepteurs=0) servent de référence pour un
-# maillage donné : le surcoût d'un cas se calcule par rapport à eux.
-# -----------------------------------------------------------------------------
 cases() {
   if [ "${QUICK}" = "1" ]; then
 cat <<'EOF'
@@ -132,8 +136,6 @@ EOF
   fi
 }
 
-# Fichier de récepteurs reproductible : N points pseudo-aléatoires (graine fixe)
-# à l'intérieur du domaine 2000 m, loin des bords.
 make_rcv() {
     local n=$1 f="${RES_DIR}/rcv_$1.txt"
     if [ ! -f "$f" ]; then
@@ -144,9 +146,6 @@ make_rcv() {
     echo "$f"
 }
 
-# Un run = une exécution mesurée + le temps du `sync` qui suit (les données
-# écrites restent sinon dans le cache mémoire : sans sync on mesure une copie
-# en RAM, pas l'écriture sur disque).
 run_case() {
     local scen=$1 cfg=$2 ex=$3 ey=$4 ez=$5 snap=$6 nrcv=$7 dest=$8 rep=$9
     local id="${scen}__${cfg}__r${rep}"
@@ -176,15 +175,11 @@ run_case() {
     rm -rf "${out}"
 }
 
-# -----------------------------------------------------------------------------
-# Exécution
-# -----------------------------------------------------------------------------
 mapfile -t CASES < <(cases)
 TOTAL=$(( ${#CASES[@]} * REPS ))
 echo "Benchmark : ${#CASES[@]} configurations x ${REPS} répétitions = ${TOTAL} runs"
 echo "Résultats : ${RES_DIR}"
 
-# Run de chauffe (init GPU, JIT, cache) : non enregistré
 echo "Chauffe..."
 "${BIN}" --ex 20 --ey 20 --ez 20 --timemax 0.05 > /dev/null 2>&1 || true
 
