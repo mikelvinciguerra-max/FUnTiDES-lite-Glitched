@@ -83,11 +83,22 @@ def visualize_sismo(sismo_file):
 
     
 if __name__ == "__main__":
-    # if (len(sys.argv) == 1):
-    #     print("Missing argument(s) !")
-    #     sys.exit(1)
-    # elif (not sys.argv[1].endswith(".bin")):
-    #     print("The argument must be a .bin file !")
-    #     sys.exit(1)
-
-
+    if (len(sys.argv) != 1 or len(sys.argv) != 4):
+        print("Missing argument(s) !")
+        sys.exit(1)
+    elif (not sys.argv[1].endswith(".bin")):
+        print("The argument must be a .bin file !")
+        sys.exit(1)
+    elif (sys.argv[1].startswith("snapshots")):
+        if (sys.argv[2] == "2d" or"2D"):
+            visualize2D_snapshots(sys.argv[1])
+        elif (sys.argv[2] == "3d" or "3D"):
+            visualize3D_snapshots(sys.argv[1])
+        else:
+            print("The second argument must be either '2d' or '3d' !")
+            sys.exit(1)
+    elif (sys.argv[1].startswith("sismos")):
+        visualize_sismo(sys.argv[1])
+    else:
+        print("The argument must be either a snapshot or a sismo file !")
+        sys.exit(1)
