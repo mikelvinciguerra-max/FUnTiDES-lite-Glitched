@@ -83,7 +83,7 @@ def visualize_sismo(sismo_file):
 
     
 if __name__ == "__main__":
-    if (len(sys.argv) != 1 or len(sys.argv) != 4):
+    if (len(sys.argv) != 2 and len(sys.argv) != 4):
         print("Missing argument(s) !")
         sys.exit(1)
     elif (not sys.argv[1].endswith(".bin")):
