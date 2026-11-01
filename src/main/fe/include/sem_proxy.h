@@ -98,6 +98,11 @@ class SEMproxy
   // write the run metrics (JSON and/or CSV) at the end of run()
   void writeMetrics();
 
+  void saveMaxField();
+  void saveMinField();
+  void saveMeanField();
+  void saveMedianField();
+
   // metrics
   std::string metrics_file_;
   std::string metrics_csv_;
@@ -158,6 +163,13 @@ class SEMproxy
   arrayReal rhsWeights;
   arrayReal rhsWeightsRcv;
   arrayReal pnAtReceiver;
+
+  // statistics
+  arrayReal pnMaxs;
+  arrayReal pnMins;
+  arrayReal pnMeans;
+  arrayReal pnMedians;
+
 
   // initialize source and RHS
   void init_source();

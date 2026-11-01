@@ -177,6 +177,52 @@ void SEMproxy::run()
     Kokkos::fence();  // kernels are asynchronous: wait, so that the compute
                       // time is not charged to the next output
 #endif
+
+    const float median_step = 0.5f;
+    #ifdef USE_KOKKOS 
+      Kokkos::parallel_for(m_mesh->getNumberOfNodes(), KOKKOS_LAMBDA (const int i) {
+        float current = pnGlobal(i, i1);
+        if (current > pnMaxs(i, 0)) {
+          pnMaxs(i, 0) = current;
+        }
+        if (current < pnMins(i, 0)) {
+          pnMins(i, 0) = current;
+        }
+        pnMeans(i, 0) += current;
+        if (indexTimeSample == num_sample_ - 1) {
+          pnMeans(i, 0) /= num_sample_;
+        }
+        if (current > pnMedians(i, 0)) {
+          pnMedians(i, 0) += median_step;
+        } else if (current < pnMedians(i, 0)) {
+            pnMedians(i, 0) -= median_step;
+        }
+      });
+
+    #else 
+
+      float current;
+      for (int i = 0; i < m_mesh->getNumberOfNodes(); i++) {
+        current = pnGlobal(i, i1);
+        if (current > pnMaxs(i, 0)) {
+          pnMaxs(i, 0) = current;
+        }
+        if (current < pnMins(i, 0)) {
+          pnMins(i, 0) = current;
+        }
+        pnMeans(i, 0) += current;
+        if (indexTimeSample == num_sample_ - 1) {
+          pnMeans(i, 0) /= num_sample_;
+        }
+        if (current > pnMedians(i, 0)) {
+          pnMedians(i, 0) += median_step;
+        } else if (current < pnMedians(i, 0)) {
+            pnMedians(i, 0) -= median_step;
+        }
+      }
+    #endif 
+
+
     totalComputeTime += system_clock::now() - startComputeTime;
     t_compute_s_ += std::chrono::duration<double>(
                         system_clock::now() - startComputeTime)
@@ -234,6 +280,11 @@ void SEMproxy::run()
 
   if (is_sismos_) saveSismos();
 
+  saveMaxField();
+  saveMinField();
+  saveMeanField();
+  saveMedianField();
+
   t_run_s_ = std::chrono::duration<double>(std::chrono::steady_clock::now() -
                                            runStart)
                  .count();
@@ -284,6 +335,11 @@ void SEMproxy::init_arrays()
   rhsElementRcv = allocateVector<vectorInt>(nbReceivers, "rhsElementRcv");
   rhsWeightsRcv = allocateArray2D<arrayReal>(
       nbReceivers, m_mesh->getNumberOfPointsPerElement(), "RHSWeightRcv");
+
+  pnMaxs = allocateArray2D<arrayReal>(m_mesh->getNumberOfNodes(), 1, "pnMaxs");
+  pnMins = allocateArray2D<arrayReal>(m_mesh->getNumberOfNodes(), 1, "pnMins");
+  pnMeans = allocateArray2D<arrayReal>(m_mesh->getNumberOfNodes(), 1, "pnMeans");
+  pnMedians = allocateArray2D<arrayReal>(m_mesh->getNumberOfNodes(), 1, "pnMedians");
 }
 
 // Initialize sources
@@ -750,4 +806,116 @@ void SEMproxy::saveSnapshot(int indexTimeSample)
   snap_write_seconds_ +=
       std::chrono::duration<double>(std::chrono::steady_clock::now() - start)
           .count();
+}
+
+void SEMproxy::saveMaxField()
+{
+  const auto start = std::chrono::steady_clock::now();
+#ifdef USE_KOKKOS
+  Kokkos::fence();  // make sure the device is done before reading on the host
+#endif
+
+  const int nbNodes = m_mesh->getNumberOfNodes();
+  std::vector<float> max_buffer(nbNodes);
+  
+  for (int n = 0; n < nbNodes; n++) 
+  {
+    max_buffer[n] = pnMaxs(n, 0);
+  }
+
+  std::string filename = "pnMaxs_field.bin";
+  
+  std::ofstream f(filename, std::ios::binary);
+  if (!f) throw std::runtime_error("Cannot write " + filename);
+  
+  f.write(reinterpret_cast<const char*>(max_buffer.data()),
+          max_buffer.size() * sizeof(float));
+  f.close();
+
+  std::cout << "---- Max Field           : 1 file, " 
+            << max_buffer.size() * sizeof(float) << " bytes." << std::endl;
+}
+
+void SEMproxy::saveMinField()
+{
+  const auto start = std::chrono::steady_clock::now();
+#ifdef USE_KOKKOS
+  Kokkos::fence();  // make sure the device is done before reading on the host
+#endif
+
+  const int nbNodes = m_mesh->getNumberOfNodes();
+  std::vector<float> max_buffer(nbNodes);
+  
+  for (int n = 0; n < nbNodes; n++) 
+  {
+    max_buffer[n] = pnMins(n, 0);
+  }
+
+  std::string filename = "pnMins_field.bin";
+  
+  std::ofstream f(filename, std::ios::binary);
+  if (!f) throw std::runtime_error("Cannot write " + filename);
+  
+  f.write(reinterpret_cast<const char*>(max_buffer.data()),
+          max_buffer.size() * sizeof(float));
+  f.close();
+
+  std::cout << "---- Min Field           : 1 file, " 
+            << max_buffer.size() * sizeof(float) << " bytes." << std::endl;
+}
+
+void SEMproxy::saveMeanField()
+{
+  const auto start = std::chrono::steady_clock::now();
+#ifdef USE_KOKKOS
+  Kokkos::fence();  // make sure the device is done before reading on the host
+#endif
+
+  const int nbNodes = m_mesh->getNumberOfNodes();
+  std::vector<float> max_buffer(nbNodes);
+  
+  for (int n = 0; n < nbNodes; n++) 
+  {
+    max_buffer[n] = pnMeans(n, 0);
+  }
+
+  std::string filename = "pnMeans_field.bin";
+  
+  std::ofstream f(filename, std::ios::binary);
+  if (!f) throw std::runtime_error("Cannot write " + filename);
+  
+  f.write(reinterpret_cast<const char*>(max_buffer.data()),
+          max_buffer.size() * sizeof(float));
+  f.close();
+
+  std::cout << "---- Mean Field           : 1 file, " 
+            << max_buffer.size() * sizeof(float) << " bytes." << std::endl;
+}
+
+void SEMproxy::saveMedianField()
+{
+  const auto start = std::chrono::steady_clock::now();
+#ifdef USE_KOKKOS
+  Kokkos::fence();  // make sure the device is done before reading on the host
+#endif
+
+  const int nbNodes = m_mesh->getNumberOfNodes();
+  std::vector<float> max_buffer(nbNodes);
+  
+  for (int n = 0; n < nbNodes; n++) 
+  {
+    max_buffer[n] = pnMedians(n, 0);
+  }
+
+  std::string filename = "pnMedians_field.bin";
+  
+  std::ofstream f(filename, std::ios::binary);
+  if (!f) throw std::runtime_error("Cannot write " + filename);
+  
+  f.write(reinterpret_cast<const char*>(max_buffer.data()),
+          max_buffer.size() * sizeof(float));
+  f.close();
+
+  std::cout << "---- Median Field           : 1 file, " 
+            << max_buffer.size() * sizeof(float) << " bytes." << std::endl;
 }
