@@ -131,12 +131,17 @@ class SEMproxy
 
   // snapshots
   bool is_snapshots_ = false;
+  bool is_statistics_ = false;
   int snap_time_interval_ = 10;
   std::string snap_folder_ = "snapshots";
   std::vector<float> snap_buffer_;     
   int snap_count_ = 0;                
   double snap_write_seconds_ = 0.0;   
+  double snap_host_copy_seconds_ = 0.0;
   unsigned long long snap_bytes_ = 0; 
+  double statistics_compute_seconds_ = 0.0;
+  double statistics_host_copy_seconds_ = 0.0;
+  double statistics_write_seconds_ = 0.0;
 
   // physics
   bool isElastic_;
@@ -169,6 +174,7 @@ class SEMproxy
   arrayReal pnMins;
   arrayReal pnMeans;
   arrayReal pnMedians;
+  float wave_speed = -1.0f;
 
 
   // initialize source and RHS

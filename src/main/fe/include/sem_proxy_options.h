@@ -33,9 +33,10 @@ class SemProxyOptions
   std::string sismo_folder = "sismos";   // output folder
 
   // snapshots (full pnGlobal wavefield saved at regular intervals)
-  bool snapshots = false;                       
+  bool snapshots = true;                       
   int snap_interval = 10;                       
   std::string snap_folder = "snapshots";        
+  bool stats = false;
 
   // run metrics (timings, data sizes, parameters of the run)
   std::string metrics_file = "";  // JSON, one file per run ("" = disabled)
@@ -44,7 +45,7 @@ class SemProxyOptions
 
   void validate() const
   {
-    if (snapshots && snap_interval <= 0)
+    if ((snapshots || stats) && snap_interval <= 0)
       throw std::runtime_error("snap-interval must be > 0");
     if (order < 1) throw std::runtime_error("order must be >= 1");
     if (ex <= 0 || ey <= 0 || ez <= 0)
@@ -96,6 +97,8 @@ class SemProxyOptions
         cxxopts::value<int>(o.snap_interval))(
         "snap-folder", "Output folder of the snapshots (default = snapshots)",
         cxxopts::value<std::string>(o.snap_folder))(
+        "stats", "Calculate and save pressure field statistics",
+        cxxopts::value<bool>(o.stats))(
         "sismos", "Save the sismograms at the end of the simulation",
         cxxopts::value<bool>(o.sismos))(
         "receivers-file",

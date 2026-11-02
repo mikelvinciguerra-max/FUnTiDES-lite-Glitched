@@ -33,6 +33,7 @@ SEMproxy::SEMproxy(const SemProxyOptions& opt)
   metrics_file_ = opt.metrics_file;
   metrics_csv_ = opt.metrics_csv;
   run_label_ = opt.run_label;
+  is_statistics_ = opt.stats;
   opt_implem_ = opt.implem;
   opt_method_ = opt.method;
   opt_mesh_ = opt.mesh;
@@ -168,6 +169,13 @@ void SEMproxy::run()
                                    rhsWeights);
   const auto runStart = std::chrono::steady_clock::now();
 
+  // to compute speed
+  bool rcv0_hit = false;
+  bool rcv1_hit = false;
+  int arrival_iter_0 = -1;
+  int arrival_iter_1 = -1;
+  const float eps = 0.001f;
+
   for (int indexTimeSample = 0; indexTimeSample < num_sample_;
        indexTimeSample++)
   {
@@ -178,49 +186,57 @@ void SEMproxy::run()
                       // time is not charged to the next output
 #endif
 
-    const float median_step = 0.5f;
-    #ifdef USE_KOKKOS 
-      Kokkos::parallel_for(m_mesh->getNumberOfNodes(), KOKKOS_LAMBDA (const int i) {
-        float current = pnGlobal(i, i1);
-        if (current > pnMaxs(i, 0)) {
-          pnMaxs(i, 0) = current;
-        }
-        if (current < pnMins(i, 0)) {
-          pnMins(i, 0) = current;
-        }
-        pnMeans(i, 0) += current;
-        if (indexTimeSample == num_sample_ - 1) {
-          pnMeans(i, 0) /= num_sample_;
-        }
-        if (current > pnMedians(i, 0)) {
-          pnMedians(i, 0) += median_step;
-        } else if (current < pnMedians(i, 0)) {
-            pnMedians(i, 0) -= median_step;
-        }
-      });
+    if (is_statistics_ && indexTimeSample % snap_time_interval_ == 0) {
+      const auto statisticsStart = std::chrono::steady_clock::now();
+      const float median_step = 0.5f;
+      #ifdef USE_KOKKOS 
+        Kokkos::parallel_for(m_mesh->getNumberOfNodes(), KOKKOS_LAMBDA (const int i) {
+          float current = pnGlobal(i, i1);
+          if (current > pnMaxs(i, 0)) {
+            pnMaxs(i, 0) = current;
+          }
+          if (current < pnMins(i, 0)) {
+            pnMins(i, 0) = current;
+          }
+          pnMeans(i, 0) += current;
+          if (indexTimeSample == num_sample_ - 1) {
+            pnMeans(i, 0) /= num_sample_;
+          }
+          if (current > pnMedians(i, 0)) {
+            pnMedians(i, 0) += median_step;
+          } else if (current < pnMedians(i, 0)) {
+              pnMedians(i, 0) -= median_step;
+          }
+        });
 
-    #else 
+      #else 
 
-      float current;
-      for (int i = 0; i < m_mesh->getNumberOfNodes(); i++) {
-        current = pnGlobal(i, i1);
-        if (current > pnMaxs(i, 0)) {
-          pnMaxs(i, 0) = current;
+        float current;
+        for (int i = 0; i < m_mesh->getNumberOfNodes(); i++) {
+          current = pnGlobal(i, i1);
+          if (current > pnMaxs(i, 0)) {
+            pnMaxs(i, 0) = current;
+          }
+          if (current < pnMins(i, 0)) {
+            pnMins(i, 0) = current;
+          }
+          pnMeans(i, 0) += current;
+          if (indexTimeSample == num_sample_ - 1) {
+            pnMeans(i, 0) /= num_sample_;
+          }
+          if (current > pnMedians(i, 0)) {
+            pnMedians(i, 0) += median_step;
+          } else if (current < pnMedians(i, 0)) {
+              pnMedians(i, 0) -= median_step;
+          }
         }
-        if (current < pnMins(i, 0)) {
-          pnMins(i, 0) = current;
-        }
-        pnMeans(i, 0) += current;
-        if (indexTimeSample == num_sample_ - 1) {
-          pnMeans(i, 0) /= num_sample_;
-        }
-        if (current > pnMedians(i, 0)) {
-          pnMedians(i, 0) += median_step;
-        } else if (current < pnMedians(i, 0)) {
-            pnMedians(i, 0) -= median_step;
-        }
-      }
-    #endif 
+      #endif 
+      #ifdef USE_KOKKOS
+        Kokkos::fence();
+      #endif
+      statistics_compute_seconds_ += std::chrono::duration<double>(
+          std::chrono::steady_clock::now() - statisticsStart).count();
+    }
 
 
     totalComputeTime += system_clock::now() - startComputeTime;
@@ -269,6 +285,51 @@ void SEMproxy::run()
                           std::chrono::steady_clock::now() - startReceivers)
                           .count();
 
+    // In situ wave propagation speed calculation
+    if (rcv_coords_.size() >= 2) 
+    {
+        // Detect when the pressure exceeds the threshold for receiver 0
+        if (!rcv0_hit && pnAtReceiver(0, indexTimeSample) > eps) 
+        {
+            rcv0_hit = true;
+            arrival_iter_0 = indexTimeSample;
+        }
+        
+        // Detect when the pressure exceeds the threshold for receiver 1
+        if (!rcv1_hit && pnAtReceiver(1, indexTimeSample) > eps) 
+        {
+            rcv1_hit = true;
+            arrival_iter_1 = indexTimeSample;
+        }
+        
+        // As soon as both receivers are hit, calculate and print the speed once
+        if (rcv0_hit && rcv1_hit && 
+           (arrival_iter_0 == indexTimeSample || arrival_iter_1 == indexTimeSample)) 
+        {
+            // Distance from source to receiver 0
+            float d0 = std::sqrt(std::pow(rcv_coords_[0][0] - src_coord_[0], 2) +
+                                 std::pow(rcv_coords_[0][1] - src_coord_[1], 2) +
+                                 std::pow(rcv_coords_[0][2] - src_coord_[2], 2));
+            
+            // Distance from source to receiver 1
+            float d1 = std::sqrt(std::pow(rcv_coords_[1][0] - src_coord_[0], 2) +
+                                 std::pow(rcv_coords_[1][1] - src_coord_[1], 2) +
+                                 std::pow(rcv_coords_[1][2] - src_coord_[2], 2));
+            
+            float d = std::abs(d0 - d1);
+            float delta_t = std::abs(arrival_iter_0 - arrival_iter_1) * dt_;
+            
+            if (delta_t > 0.0f) 
+            {
+                wave_speed = d / delta_t;
+                std::cout << "\n[In situ] Wave speed detected at iteration " << indexTimeSample << ":" << std::endl;
+                std::cout << "  -> Arrival Rcv0: " << arrival_iter_0 
+                          << " | Arrival Rcv1: " << arrival_iter_1 << std::endl;
+                std::cout << "  -> Propagation speed: " << wave_speed << " m/s\n" << std::endl;
+            }
+        }
+    }
+
     swap(i1, i2);
 
     auto tmp = solverData.m_i1;
@@ -280,10 +341,14 @@ void SEMproxy::run()
 
   if (is_sismos_) saveSismos();
 
-  saveMaxField();
-  saveMinField();
-  saveMeanField();
-  saveMedianField();
+  printf("Wave-speed : %f\n", wave_speed);
+  if (is_statistics_)
+  {
+    saveMaxField();
+    saveMinField();
+    saveMeanField();
+    saveMedianField();
+  }
 
   t_run_s_ = std::chrono::duration<double>(std::chrono::steady_clock::now() -
                                            runStart)
@@ -312,6 +377,16 @@ void SEMproxy::run()
          << snap_bytes_ << " bytes, " << snap_write_seconds_ << " seconds."
          << endl;
   }
+        cout << "---- Snapshot Host Copy Time : " << snap_host_copy_seconds_
+          << " seconds." << endl;
+        cout << "---- Snapshot File Write Time : " << snap_write_seconds_
+          << " seconds." << endl;
+        cout << "---- In Situ Statistics Compute Time : "
+          << statistics_compute_seconds_ << " seconds." << endl;
+        cout << "---- In Situ Statistics Host Copy Time : "
+          << statistics_host_copy_seconds_ << " seconds." << endl;
+        cout << "---- In Situ Statistics File Write Time : "
+          << statistics_write_seconds_ << " seconds." << endl;
   cout << "------------------------------------------------ " << endl;
 
   writeMetrics();
@@ -336,10 +411,13 @@ void SEMproxy::init_arrays()
   rhsWeightsRcv = allocateArray2D<arrayReal>(
       nbReceivers, m_mesh->getNumberOfPointsPerElement(), "RHSWeightRcv");
 
-  pnMaxs = allocateArray2D<arrayReal>(m_mesh->getNumberOfNodes(), 1, "pnMaxs");
-  pnMins = allocateArray2D<arrayReal>(m_mesh->getNumberOfNodes(), 1, "pnMins");
-  pnMeans = allocateArray2D<arrayReal>(m_mesh->getNumberOfNodes(), 1, "pnMeans");
-  pnMedians = allocateArray2D<arrayReal>(m_mesh->getNumberOfNodes(), 1, "pnMedians");
+  if (is_statistics_)
+  {
+    pnMaxs = allocateArray2D<arrayReal>(m_mesh->getNumberOfNodes(), 1, "pnMaxs");
+    pnMins = allocateArray2D<arrayReal>(m_mesh->getNumberOfNodes(), 1, "pnMins");
+    pnMeans = allocateArray2D<arrayReal>(m_mesh->getNumberOfNodes(), 1, "pnMeans");
+    pnMedians = allocateArray2D<arrayReal>(m_mesh->getNumberOfNodes(), 1, "pnMedians");
+  }
 }
 
 // Initialize sources
@@ -663,6 +741,9 @@ void SEMproxy::writeMetrics()
   m.addInt("total_bytes", static_cast<long long>(totalBytes));
   m.addNum("snapshot_MBps", tSnap > 0 ? snap_bytes_ / mega / tSnap : 0.0);
   m.addNum("io_MBps", tIo > 0 ? (snap_bytes_ + sismoBytes) / mega / tIo : 0.0);
+  if (wave_speed > 0.0f) {
+      m.addNum("wave_speed_m_s", wave_speed);
+  }
 
   // memory of the host process
   m.addNum("peak_rss_MiB", peakRssMiB());
@@ -782,19 +863,21 @@ void SEMproxy::initSnapshots(const SemProxyOptions& opt)
 // this must be called before swap(i1, i2) in run().
 void SEMproxy::saveSnapshot(int indexTimeSample)
 {
-  const auto start = std::chrono::steady_clock::now();
-
 #ifdef USE_KOKKOS
   Kokkos::fence();  // make sure the device is done before reading on the host
 #endif
 
   const int nbNodes = m_mesh->getNumberOfNodes();
+  const auto copyStart = std::chrono::steady_clock::now();
   for (int n = 0; n < nbNodes; n++) snap_buffer_[n] = pnGlobal(n, i1);
+  snap_host_copy_seconds_ += std::chrono::duration<double>(
+      std::chrono::steady_clock::now() - copyStart).count();
 
   std::ostringstream filename;
   filename << snap_folder_ << "/snapshot_" << std::setfill('0') << std::setw(5)
            << indexTimeSample << ".bin";
 
+  const auto writeStart = std::chrono::steady_clock::now();
   std::ofstream f(filename.str(), std::ios::binary);
   if (!f) throw std::runtime_error("Cannot write " + filename.str());
   f.write(reinterpret_cast<const char*>(snap_buffer_.data()),
@@ -803,9 +886,8 @@ void SEMproxy::saveSnapshot(int indexTimeSample)
 
   snap_count_++;
   snap_bytes_ += snap_buffer_.size() * sizeof(float);
-  snap_write_seconds_ +=
-      std::chrono::duration<double>(std::chrono::steady_clock::now() - start)
-          .count();
+    snap_write_seconds_ += std::chrono::duration<double>(
+      std::chrono::steady_clock::now() - writeStart).count();
 }
 
 void SEMproxy::saveMaxField()
@@ -817,20 +899,24 @@ void SEMproxy::saveMaxField()
 
   const int nbNodes = m_mesh->getNumberOfNodes();
   std::vector<float> max_buffer(nbNodes);
-  
+  const auto copyStart = std::chrono::steady_clock::now();
   for (int n = 0; n < nbNodes; n++) 
   {
     max_buffer[n] = pnMaxs(n, 0);
   }
+  statistics_host_copy_seconds_ += std::chrono::duration<double>(
+      std::chrono::steady_clock::now() - copyStart).count();
 
   std::string filename = "pnMaxs_field.bin";
-  
+  const auto writeStart = std::chrono::steady_clock::now();
   std::ofstream f(filename, std::ios::binary);
   if (!f) throw std::runtime_error("Cannot write " + filename);
   
   f.write(reinterpret_cast<const char*>(max_buffer.data()),
           max_buffer.size() * sizeof(float));
   f.close();
+  statistics_write_seconds_ += std::chrono::duration<double>(
+      std::chrono::steady_clock::now() - writeStart).count();
 
   std::cout << "---- Max Field           : 1 file, " 
             << max_buffer.size() * sizeof(float) << " bytes." << std::endl;
@@ -845,20 +931,24 @@ void SEMproxy::saveMinField()
 
   const int nbNodes = m_mesh->getNumberOfNodes();
   std::vector<float> max_buffer(nbNodes);
-  
+  const auto copyStart = std::chrono::steady_clock::now();
   for (int n = 0; n < nbNodes; n++) 
   {
     max_buffer[n] = pnMins(n, 0);
   }
+  statistics_host_copy_seconds_ += std::chrono::duration<double>(
+      std::chrono::steady_clock::now() - copyStart).count();
 
   std::string filename = "pnMins_field.bin";
-  
+  const auto writeStart = std::chrono::steady_clock::now();
   std::ofstream f(filename, std::ios::binary);
   if (!f) throw std::runtime_error("Cannot write " + filename);
   
   f.write(reinterpret_cast<const char*>(max_buffer.data()),
           max_buffer.size() * sizeof(float));
   f.close();
+  statistics_write_seconds_ += std::chrono::duration<double>(
+      std::chrono::steady_clock::now() - writeStart).count();
 
   std::cout << "---- Min Field           : 1 file, " 
             << max_buffer.size() * sizeof(float) << " bytes." << std::endl;
@@ -873,20 +963,24 @@ void SEMproxy::saveMeanField()
 
   const int nbNodes = m_mesh->getNumberOfNodes();
   std::vector<float> max_buffer(nbNodes);
-  
+  const auto copyStart = std::chrono::steady_clock::now();
   for (int n = 0; n < nbNodes; n++) 
   {
     max_buffer[n] = pnMeans(n, 0);
   }
+  statistics_host_copy_seconds_ += std::chrono::duration<double>(
+      std::chrono::steady_clock::now() - copyStart).count();
 
   std::string filename = "pnMeans_field.bin";
-  
+  const auto writeStart = std::chrono::steady_clock::now();
   std::ofstream f(filename, std::ios::binary);
   if (!f) throw std::runtime_error("Cannot write " + filename);
   
   f.write(reinterpret_cast<const char*>(max_buffer.data()),
           max_buffer.size() * sizeof(float));
   f.close();
+  statistics_write_seconds_ += std::chrono::duration<double>(
+      std::chrono::steady_clock::now() - writeStart).count();
 
   std::cout << "---- Mean Field           : 1 file, " 
             << max_buffer.size() * sizeof(float) << " bytes." << std::endl;
@@ -901,20 +995,24 @@ void SEMproxy::saveMedianField()
 
   const int nbNodes = m_mesh->getNumberOfNodes();
   std::vector<float> max_buffer(nbNodes);
-  
+  const auto copyStart = std::chrono::steady_clock::now();
   for (int n = 0; n < nbNodes; n++) 
   {
     max_buffer[n] = pnMedians(n, 0);
   }
+  statistics_host_copy_seconds_ += std::chrono::duration<double>(
+      std::chrono::steady_clock::now() - copyStart).count();
 
   std::string filename = "pnMedians_field.bin";
-  
+  const auto writeStart = std::chrono::steady_clock::now();
   std::ofstream f(filename, std::ios::binary);
   if (!f) throw std::runtime_error("Cannot write " + filename);
   
   f.write(reinterpret_cast<const char*>(max_buffer.data()),
           max_buffer.size() * sizeof(float));
   f.close();
+  statistics_write_seconds_ += std::chrono::duration<double>(
+      std::chrono::steady_clock::now() - writeStart).count();
 
   std::cout << "---- Median Field           : 1 file, " 
             << max_buffer.size() * sizeof(float) << " bytes." << std::endl;
